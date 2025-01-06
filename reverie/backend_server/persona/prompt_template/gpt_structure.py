@@ -5,25 +5,63 @@ File: gpt_structure.py
 Description: Wrapper functions for calling OpenAI APIs.
 """
 import json
-import random
 import openai
 import time 
 
 from utils import *
 
-openai.api_key = openai_api_key
+import torch
+from transformers import BitsAndBytesConfig, AutoModelForCausalLM, AutoTokenizer
+
+config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+)
+
+model_name_or_path = "meta-llama/Llama-3.2-3B-Instructt" # meta-llama/Llama-3.2-3B-Instruct # meta-llama/Meta-Llama-3-8B-Instruct
+model = AutoModelForCausalLM.from_pretrained(model_name_or_path, quantization_config=config, device_map="auto")
+
+device = "cuda:0"
+tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=False)
+
+model.eval()
+
+def LLM_call(prompt, max_tokens=50, temperature=0.7):
+    print("called Llama 3")
+    print(max_tokens, temperature)
+    model_inputs = tokenizer(prompt, return_tensors="pt")
+    tokens = model_inputs["input_ids"].to(device)
+        # Note the length of the input
+    input_length = tokens.shape[1]
+    generation_output = model.generate(
+        tokens,
+        max_new_tokens = max_tokens,
+        do_sample=True,
+        temperature=0.7, # constant for debugging
+        pad_token_id=tokenizer.eos_token_id
+    )
+    new_tokens = generation_output[0, input_length:].tolist()  # Get only the new token ids
+    output = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    print(f'\n {output}')
+    return output
+
+llm = LLM_call
 
 def temp_sleep(seconds=0.1):
   time.sleep(seconds)
 
 def ChatGPT_single_request(prompt): 
   temp_sleep()
-
-  completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo", 
-    messages=[{"role": "user", "content": prompt}]
-  )
-  return completion["choices"][0]["message"]["content"]
+  try:
+    print("ChatGPT_single_request")
+    response = llm(prompt)
+  except Exception as e:
+    print(e)
+    ### TODO: Add map-reduce or splitter to handle this error.
+    return "LLM ERROR"
+  return response
 
 
 # ============================================================================
@@ -56,69 +94,24 @@ def GPT4_request(prompt):
     return "ChatGPT ERROR"
 
 
-def ChatGPT_request(prompt): 
+def ChatGPT_request(prompt,parameters): 
   """
-  Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
-  server and returns the response. 
+  Given a prompt, make a request to LLM server and returns the response. 
   ARGS:
-    prompt: a str prompt
-    gpt_parameter: a python dictionary with the keys indicating the names of  
-                   the parameter and the values indicating the parameter 
-                   values.   
+    prompt: a str prompt 
+    parameters: optional
   RETURNS: 
-    a str of GPT-3's response. 
+    a str of LLM's response. 
   """
   # temp_sleep()
-  try: 
-    completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo", 
-    messages=[{"role": "user", "content": prompt}]
-    )
-    return completion["choices"][0]["message"]["content"]
-  
-  except: 
-    print ("ChatGPT ERROR")
-    return "ChatGPT ERROR"
-
-
-def GPT4_safe_generate_response(prompt, 
-                                   example_output,
-                                   special_instruction,
-                                   repeat=3,
-                                   fail_safe_response="error",
-                                   func_validate=None,
-                                   func_clean_up=None,
-                                   verbose=False): 
-  prompt = 'GPT-3 Prompt:\n"""\n' + prompt + '\n"""\n'
-  prompt += f"Output the response to the prompt above in json. {special_instruction}\n"
-  prompt += "Example output json:\n"
-  prompt += '{"output": "' + str(example_output) + '"}'
-
-  if verbose: 
-    print ("CHAT GPT PROMPT")
-    print (prompt)
-
-  for i in range(repeat): 
-
-    try: 
-      curr_gpt_response = GPT4_request(prompt).strip()
-      end_index = curr_gpt_response.rfind('}') + 1
-      curr_gpt_response = curr_gpt_response[:end_index]
-      curr_gpt_response = json.loads(curr_gpt_response)["output"]
-      
-      if func_validate(curr_gpt_response, prompt=prompt): 
-        return func_clean_up(curr_gpt_response, prompt=prompt)
-      
-      if verbose: 
-        print ("---- repeat count: \n", i, curr_gpt_response)
-        print (curr_gpt_response)
-        print ("~~~~")
-
-    except: 
-      pass
-
-  return False
-
+  try:
+    print("ChatGPT_request")
+    response = llm(prompt, parameters["max_tokens"], parameters["temperature"])
+  except Exception as e:
+    print(e)
+    ### TODO: Add map-reduce or splitter to handle this error.
+    return "LLM ERROR"
+  return response
 
 def ChatGPT_safe_generate_response(prompt, 
                                    example_output,
@@ -194,39 +187,23 @@ def ChatGPT_safe_generate_response_OLD(prompt,
 # ###################[SECTION 2: ORIGINAL GPT-3 STRUCTURE] ###################
 # ============================================================================
 
-def GPT_request(prompt, gpt_parameter):
-    """
-    Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
-    server and return the response using gpt-3.5-turbo.
-
-    ARGS:
-        prompt: a str prompt
-        gpt_parameter: a python dictionary with the keys indicating parameter 
-                       names and values for those parameters
-                       (e.g. max_tokens, temperature, top_p, etc.).
-
-    RETURNS:
-        A str of the GPT's response, or "TOKEN LIMIT EXCEEDED" on exception.
-    """
-    temp_sleep()
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=gpt_parameter.get("temperature", 0.7),
-            max_tokens=gpt_parameter.get("max_tokens", 100),
-            top_p=gpt_parameter.get("top_p", 1.0),
-            frequency_penalty=gpt_parameter.get("frequency_penalty", 0.0),
-            presence_penalty=gpt_parameter.get("presence_penalty", 0.0),
-            stop=gpt_parameter.get("stop", None),
-        )
-        return response["choices"][0]["message"]["content"]
-
-    except Exception as e:
-        print(e)
-        return "LLM API ERROR"
+def GPT_request(prompt,parameters): 
+  """
+  Given a prompt, make a request to LLM server and returns the response. 
+  ARGS:
+    prompt: a str prompt 
+    parameters: optional 
+  RETURNS: 
+    a str of LLM's response. 
+  """
+  # temp_sleep()
+  try:
+    response = llm(prompt, parameters["max_tokens"], parameters["temperature"])
+  except Exception as e:
+    print(e)
+    ### TODO: Add map-reduce or splitter to handle this error.
+    return "LLM ERROR"
+  return response
 
 
 def generate_prompt(curr_input, prompt_lib_file): 
@@ -277,13 +254,29 @@ def safe_generate_response(prompt,
       print ("~~~~")
   return fail_safe_response
 
+def get_embedding(text: str):
+    """
+    Compute a simple embedding by averaging the final hidden states from a decoder-only Llama model.
+    """
+    # 1. Tokenize input
+    inputs = tokenizer(text, return_tensors="pt").to(device)
 
-def get_embedding(text, model="text-embedding-ada-002"):
-  text = text.replace("\n", " ")
-  if not text: 
-    text = "this is blank"
-  return openai.Embedding.create(
-          input=[text], model=model)['data'][0]['embedding']
+    # 2. Forward pass with hidden states
+    with torch.no_grad():
+        outputs = model(
+            **inputs,
+            output_hidden_states=True,  # request all hidden states
+            return_dict=True            # return as a dictionary-like object
+        )
+        # outputs.hidden_states is a tuple of hidden states from all layers
+        # The final layer is the last element in that tuple:
+        last_hidden_state = outputs.hidden_states[-1]  # shape: [batch_size, seq_length, hidden_dim]
+
+    # 3. Pool the sequence of hidden states into a single vector (for example, mean-pool):
+    embedding = last_hidden_state.mean(dim=1)  # shape: [batch_size, hidden_dim]
+    embedding = embedding.squeeze(0)           # shape: [hidden_dim] (for a single example)
+
+    return embedding
 
 
 if __name__ == '__main__':
@@ -314,23 +307,3 @@ if __name__ == '__main__':
                                  True)
 
   print (output)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
