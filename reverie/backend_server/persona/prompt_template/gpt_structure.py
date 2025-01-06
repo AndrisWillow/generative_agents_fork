@@ -194,34 +194,39 @@ def ChatGPT_safe_generate_response_OLD(prompt,
 # ###################[SECTION 2: ORIGINAL GPT-3 STRUCTURE] ###################
 # ============================================================================
 
-def GPT_request(prompt, gpt_parameter): 
-  """
-  Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
-  server and returns the response. 
-  ARGS:
-    prompt: a str prompt
-    gpt_parameter: a python dictionary with the keys indicating the names of  
-                   the parameter and the values indicating the parameter 
-                   values.   
-  RETURNS: 
-    a str of GPT-3's response. 
-  """
-  temp_sleep()
-  try: 
-    response = openai.Completion.create(
-                model=gpt_parameter["engine"],
-                prompt=prompt,
-                temperature=gpt_parameter["temperature"],
-                max_tokens=gpt_parameter["max_tokens"],
-                top_p=gpt_parameter["top_p"],
-                frequency_penalty=gpt_parameter["frequency_penalty"],
-                presence_penalty=gpt_parameter["presence_penalty"],
-                stream=gpt_parameter["stream"],
-                stop=gpt_parameter["stop"],)
-    return response.choices[0].text
-  except: 
-    print ("TOKEN LIMIT EXCEEDED")
-    return "TOKEN LIMIT EXCEEDED"
+def GPT_request(prompt, gpt_parameter):
+    """
+    Given a prompt and a dictionary of GPT parameters, make a request to OpenAI
+    server and return the response using gpt-3.5-turbo.
+
+    ARGS:
+        prompt: a str prompt
+        gpt_parameter: a python dictionary with the keys indicating parameter 
+                       names and values for those parameters
+                       (e.g. max_tokens, temperature, top_p, etc.).
+
+    RETURNS:
+        A str of the GPT's response, or "TOKEN LIMIT EXCEEDED" on exception.
+    """
+    temp_sleep()
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=gpt_parameter.get("temperature", 0.7),
+            max_tokens=gpt_parameter.get("max_tokens", 100),
+            top_p=gpt_parameter.get("top_p", 1.0),
+            frequency_penalty=gpt_parameter.get("frequency_penalty", 0.0),
+            presence_penalty=gpt_parameter.get("presence_penalty", 0.0),
+            stop=gpt_parameter.get("stop", None),
+        )
+        return response["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print(e)
+        return "LLM API ERROR"
 
 
 def generate_prompt(curr_input, prompt_lib_file): 
